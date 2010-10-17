@@ -63,6 +63,8 @@ MostCommon[list_] := Commonest[list,1][[1]];
 MostCommonN[list_, n_] := With[{c = Quiet[Commonest[list,n]]}, PadRight[c,n,c]];
 
 Decimate::usage = "Take n equally spaced samples from a list";
+Decimate[list_, l_List] :=
+	Part[list, DeleteDuplicates[Clip[l,{1,Length[list]}]]];
 Decimate[list_, n_: 10] :=
   With[{len = Length[list]},
    With[{nn = Min[n - 1, len - 1]},
@@ -211,7 +213,7 @@ Pairwise[rulelist_, "Symmetric"] :=
 Pairwise[rulelist_, "Antisymmetric"] :=
 	Pairwise[Join[rulelist, Function[Reverse[#1] -> -#2] @@@ rulelist]];
 
-PD = Pairwise[{
+PrisonersDilemma = Pairwise[{
 	{-1,-1} -> -2, 
 	{-1, 1} ->  4, 
 	{ 1, 1} ->  2, 
@@ -224,6 +226,8 @@ Ising = Pairwise[{
 	{ 1,-1} ->  1, 
 	{ 1, 1} -> -1, 
 	{ 0, _} -> 0.5}];
+
+Consensus = Function[x, Count[x,x[[1]]]/Length[x]];
 
 RockPaperScissors = 
 	Pairwise[{
@@ -528,12 +532,10 @@ backend[data:SimulationData[{cells_, agents_, frames_}, {agentcache_, ___}, _], 
 
 
 ExportAnimation[file_, data_SimulationData, opts:OptionsPattern[Visualize]] :=
-Module[{sim, func, options, render, label, len},
+Module[{func, options, render, label, len},
 
-	sim = MapAt[Decimate[#, OptionValue[Panels]]&, data, {{1,1}, {1,2}, {1,3}}];
-	
 	label = OptionValue[Label];
-	func = backend[sim, opts];
+	func = backend[data, opts];
 	len = Length[data[[1]]];
 
 	render = Table[
@@ -550,14 +552,13 @@ Module[{sim, func, options, render, label, len},
 
 
 Animation[data_SimulationData, opts:OptionsPattern[Visualize]] :=
-Module[{sim, func, options, legend},
+Module[{func, options, legend},
 
-	sim = MapAt[Decimate[#, OptionValue[Panels]]&, data, {{1,1}, {1,2}, {1,3}}];
-	func = backend[sim, opts];
+	func = backend[data, opts];
 	
 	Animate[
 			Check[func[i], "Error"],
-			{i, If[TrueQ @ OptionValue[Legend], 0, 1], Length[sim[[1,1]]], 1},
+			{i, If[TrueQ @ OptionValue[Legend], 0, 1], Length[data[[1,1]]], 1},
 			AnimationRunning -> False,
 			AnimationRate -> 15
 		]
