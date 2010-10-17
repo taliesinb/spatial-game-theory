@@ -315,10 +315,15 @@ makeWorld[Concentric[Agents_], size_] :=
 
 makeWorld[Uniform[agent_], size_] := makeWorld[{agent}, size];
 
-makeWorld[Randomized[Agents_, opts___], size_] := 
+makeWorld[Randomized[Agents_List, opts___], size_] := 
 	With[{smoothing = "Smoothing" /. {opts} /. "Smoothing" -> 0},
 	With[{agents = CacheAgentStatic /@ Agents},
 	smooth[RandomChoice[agents,size], smoothing]]];
+
+makeWorld[Randomized[probs_List -> Agents_List, opts___], size_] := 
+	With[{smoothing = "Smoothing" /. {opts} /. "Smoothing" -> 0},
+	With[{agents = CacheAgentStatic /@ Agents},
+	smooth[RandomChoice[probs -> agents,size], smoothing]]];
 
 
 blurMode[arr_,n_]:=
