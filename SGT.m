@@ -88,7 +88,8 @@ ComplexReplace[lhs_, Agent_] := With[
 	{agent = AgentTable[Agent]},
 	Replace[
 		If[MatchQ[agent, _Function | _Symbol], agent[lhs], Replace[lhs, agent]],
-		w_Weighted :> RandomChoice[Thread[List @@ w, Rule]]]];
+		{w_Weighted :> RandomChoice[Thread[List @@ w, Rule]],
+		 Bit[r_] :> RandomChoice[{r,1-r}->{1,0}]}]];
 
 SimpleReplace[lhs_, Agent_] := Replace[lhs, AgentTable[Agent]];
 
@@ -244,8 +245,8 @@ Pairwise[rulelist_, "Antisymmetric"] :=
 
 PrisonersDilemma = Pairwise[{
 	{-1,-1} -> -2, 
-	{-1, 1} ->  4, 
-	{ 1, 1} ->  2, 
+	{-1, 1} -> 4, 
+	{ 1, 1} -> 2, 
 	{ 1,-1} -> -4, 
 	{ 0, _} -> 0.5}];
 
@@ -307,6 +308,7 @@ Mutate[RuleDelayed[a_, b_]]:= RuleDelayed[a, b];
 Mutate[i_Integer] := RandomChoice[$actions];
 Mutate[r_Real] := RandomReal[{0.5, 2}] * r;
 Mutate[weights_Weighted] := MapAt[Mutate, weights, {RandomInteger[{1,Length[weights]}],1}];
+Mutate[Bit[r_]] := Bit[Clip[r + 0.1 * RandomReal[], {0, 1}]];
 
 MutateAgent[rules_List] := MapAt[Mutate, rules, RandomInteger[{1, Length[rules]}]];
 MutateAgent[rule_] := MapAt[Mutate, rule, {2}];
@@ -516,6 +518,8 @@ SimulationOptions[SimulationData[_, _, options_]] := options;
 ColorRandomly[value_] := With[{hash = Hash[value]}, Hue[Mod[hash, 64] / 64.0, 0.7 + (Mod[hash / 64, 5]/25)]];
 PastelHue[hue_Real] := Hue[hue, 0.7];
 PastelHue[hue_Integer] := Hue[0.55+hue/5.5, 0.8];
+GreenRed[f_] := RGBColor[0.5+f,1-0.7f,0.2f];
+RedGreen[f_] := GreenRed[1-f];
 
 PostprocessGrid[SimulationData[{_, agents_, _}, tables:{agentcache_, ___}, _], function_, normalize_] :=
 	Block[{ParentTable, AgentTable, DriftTable, AgeTable, SequenceTable},
