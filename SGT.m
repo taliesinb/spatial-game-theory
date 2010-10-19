@@ -12,6 +12,8 @@ $temperature = 1;
 $mutation = 0;
 $mutations = 3;
 $payoff = Function[0];
+$predictive = None;
+$selectionsteps = 1;
 $maskentries = {
 4 -> 
 {{0, 1, 0},
@@ -28,7 +30,7 @@ $maskentries = {
 };
 
 
-mask[n_] := Prepend[Position[n /. $maskentries, 1] - 2, {0,0}];
+mask[n_] := Position[n /. $maskentries, 1] - 2;
 SetMask[n_] := ($maskn = n; $maskvals = n /. $maskentries; $mask = mask[n]);
 SetMask[6];
 
@@ -37,24 +39,30 @@ SetMask[6];
 (*Utility functions for dealing with spatial grids *)
 
 
-GridThread[arrays_] := Transpose[arrays, {3,1,2}];
+GridThread[arrs_] := Transpose[arrs, {3,1,2}];
 
-GridMap[function_, array_] := Map[function, array, {2}];
-GridMap2[function_, array1_, array2_List] := MapThread[function, {array1, array2}, 2];
-GridMapConstant[function_, array1_, arg2_] := 
-	If[arg2 === None, 
-		Map[function, array1, {2}],
-		GridMap[function[#1, arg2]&, array1]];
+GridMap[function_, arr_] := Map[function, arr, {2}];
+GridMap[function_, arr1_, arr2_] := MapThread[function, {arr1, arr2}, 2];
+
+GridMapConstant[function_, arr1_, c_] := GridMap[function[#1, c]&, arr1];
+GridMapConstant[function_, arr1_, None|Null] := GridMap[function, arr1];
+
+GridMapConstant[function_, arr1_, arr2_, c_] := GridMap[function[#1, #2, c]&, arr1, arr2];
+GridMapConstant[function_, arr1_, arr2_, None|Null] := GridMap[function, arr1, arr2];
 
 (* Determine grid of cell-wise neighborhoods *)
 $boundary = "Cyclic";
-GridNeighbors[cells_] := Block[{$boundary = "Cyclic"}, GridNeighbors[ArrayPad[cells, 1, "Fixed"]][[2;;-2,2;;-2]]] /; ($boundary == "Fixed");
-GridNeighbors[cells_] := GridThread[RotateLeft[cells, #]& /@ $mask] /; ($boundary == "Cyclic");
+GridNeighbors[cells_, center_] := Block[{$boundary = "Cyclic"}, GridNeighbors[ArrayPad[cells, 1, "Fixed"], center][[2;;-2,2;;-2]]] /; ($boundary == "Fixed");
+GridNeighbors[cells_, center_] := GridThread[RotateLeft[cells, #]& /@ If[center, $mask ~Prepend~ {0,0}, $mask]] /; ($boundary == "Cyclic");
 
 
 (* ::Subsection:: *)
 (*Misc utility functions*)
 
+
+toList[x_List] := x;
+toList[x_] := {x};
+toList[x:None|Null] := x;
 
 FunctionToGraph[symbol_] := Select[Function[#[[1,1,1]]->#[[2]]]/@ DownValues[symbol], !MatchQ[#[[1,0]], Blank|Pattern]&];
 GraphToFunction[graph_] := With[{dispatch = Dispatch[graph]}, Function[Replace[#, dispatch]]];
@@ -90,11 +98,11 @@ SimpleReplace[lhs_, Agent_] := Replace[lhs, AgentTable[Agent]];
 
 
 (* Some functions of cell neighborhoods that can be used as inputs to each agent *)
-RandomNeighbor[cells_] := GridMap[RandomChoice, GridNeighbors[cells]];
+RandomNeighbor[cells_] := GridMap[RandomChoice, GridNeighbors[cells, True]];
 ClipLocalTotal[cells_] := Clip[LocalTotal[cells], {Min[$actions],Max[$actions]}];
 LocalTotal[cells_] := ListConvolve[Reverse[Reverse /@ $maskvals], cells, {2,2}];
-LocalCount[cells_] := GridMap[Function[local, Count[local, #]& /@ Most[$actions]], GridNeighbors[cells]];
-LocalAgentType[cells_] := GridMap[MostCommon, GridNeighbors[cells]];
+LocalCount[cells_] := GridMap[Function[local, Count[local, #]& /@ Most[$actions]], GridNeighbors[cells, True]];
+LocalAgentType[cells_] := GridMap[MostCommon, GridNeighbors[cells, True]];
 $local = LocalTotal;
 
 
@@ -106,42 +114,58 @@ $agenttype = "Simple";
 
 UpdateAgents[cells_, agents_] :=
 	Clip[
-		GridMap2[ComplexReplace,
+		GridMap[ComplexReplace,
 		GridThread[{$local[cells], cells}], agents],
 		{Min[$actions],Max[$actions]}
 	] /; ($agenttype == "Complex");
 
 UpdateAgents[cells_, agents_] :=
-	GridMap2[SimpleReplace, GridThread[{$local[cells], cells}], agents] /; ($agenttype == "Simple");
+	GridMap[SimpleReplace, GridThread[{$local[cells], cells}], agents] /; ($agenttype == "Simple");
 
 UpdateAgents[cells_, agents_] := agents /; ($agenttype == "Constant");
+
+UpdateAgents[cells_, agents_, steps_] := NestList[UpdateAgents[#, agents]&, cells, steps - 1];
+
+
+ComputeScores[cells_, agents_] := 
+	With[{history = UpdateAgents[cells, agents, $selectionsteps],
+		 global = If[$global =!= None, $global[cells]]},
+		Mean[Map[
+			GridMapConstant[$payoff, #, GridNeighbors[#, False], global]&, 
+			history]] / $temperature // N // Exp
+	];
+
+
+SelectAgents[cells_, agents_] :=			
+	GridMap[
+		If[$mutation > 0, ChooseAgent, RandomChoice[Rule[#1, #2]]&], 
+		GridNeighbors[ComputeScores[cells, agents], True],
+		GridNeighbors[agents, True]
+	] /; $predictive === None;
+
+SelectAgents[cells_, agents_] :=
+	Module[
+	{sz = Dimensions[cells], 
+	 cells2 = UpdateAgents[cells, agents],
+	 global = If[$global =!= None, $global[cells]],
+	 scores},
+		
+	scores = GridMapConstant[$payoff, 
+		UpdateAgents[cells, ConstantArray[#, sz]], 
+		GridNeighbors[cells2, False], 
+		global]& /@ $predictive;
+
+	GridMapConstant[
+		If[$mutation > 0, ChooseAgent, RandomChoice[Rule[#1, #2]]&],
+		GridThread[scores / $temperature // N // Exp],
+		$predictive
+	]] /; $predictive =!= None;
 	
-SelectAgents[cells_, agents_, steps_] :=			
-	With[{scores = Mean[GridMapConstant[$payoff, GridNeighbors[#], If[$global =!= None, $global[cells], None]]& /@ NestList[UpdateAgents[#, agents]&, cells, steps - 1]]},
-		GridMap2[
-			ChooseAgent, 
-			GridNeighbors[agents], 
-			GridNeighbors[Exp[N[scores / $temperature]]]
-		]
-	];
-
-SelectAgents[cells_, agents_, 1] :=			
-	With[{scores = GridMapConstant[
-			$payoff, 
-			GridNeighbors[cells], 
-			If[$global =!= None, $global[cells], None]]},
-		GridMap2[
-			ChooseAgent, 
-			GridNeighbors[agents], 
-			GridNeighbors[Exp[N[scores / $temperature]]]
-		]
-	];
-
-ChooseAgent[agents_, scores_]:=
-	With[{me = agents[[1]]}, 
+ChooseAgent[scores_, agents_] :=
 	If[RandomReal[] < $mutation,
-		CacheAgent[Nest[MutateAgent, AgentTable[me], $mutations], me],
-		RandomChoice[scores -> agents]]];
+		With[{me = agents[[1]]}, 
+			CacheAgent[Nest[MutateAgent, AgentTable[me], $mutations], me]],
+		RandomChoice[scores -> agents]];
 
 
 (* ::Subsection:: *)
@@ -198,14 +222,19 @@ Pairwise[rulelist_]:=
 			#1[[1]] == #2[[1]]&];
 		min = Min[actions]-1;
 		table = Table[Replace[{a,b}, dispatch], {a, actions}, {b, actions}];
-		With[{MIN = min, TABLE = table}, Compile[{{cells,_Integer,1}},
-			With[{me = cells[[1]]},
-				Mean @ Rest @ Table[
-					TABLE[[me - MIN, you - MIN]],
-					{you, cells}]
-			]
+		With[{MIN = min, TABLE = table}, Compile[{{me, _Integer}, {cells,_Integer,1}},
+			Mean @ Table[
+				TABLE[[me - MIN, you - MIN]],
+				{you, cells}]
 		]]
 	]
+
+Matrix[matrix_, min_:0] := 
+	With[{MATRIX = N[matrix], MIN = 1-min}, 
+		Compile[{{me, _Integer}, {cells,_Integer,1}},
+			Mean @ Table[
+				MATRIX[[me + MIN, you + MIN]],
+				{you, cells}]]];
 
 Pairwise[rulelist_, "Symmetric"] :=
 	Pairwise[Join[rulelist, Function[Reverse[#1] -> #2] @@@ rulelist]];
@@ -223,11 +252,18 @@ PrisonersDilemma = Pairwise[{
 Ising = Pairwise[{
 	{-1,-1} -> -1, 
 	{-1, 1} ->  1, 
-	{ 1,-1} ->  1, 
-	{ 1, 1} -> -1, 
-	{ 0, _} -> 0.5}];
+	{ 1, 1} -> -1,
+	{ 0, _} ->  0},
+	"Symmetric"];
 
-Consensus = Function[x, Count[x,x[[1]]]/Length[x]];
+AntiIsing = Pairwise[{
+	{-1,-1} ->  1, 
+	{-1, 1} -> -1, 
+	{ 1, 1} ->  1, 
+	{ 0, _} ->  0},
+	"Symmetric"];
+
+Consensus = Function[{x,cells}, Count[cells,x]/Length[cells]];
 
 RockPaperScissors = 
 	Pairwise[{
@@ -286,7 +322,7 @@ Concentric::usage = "";
 Randomized::usage = "";
 Uniform::usage = "";
 
-SetAttributes[{Sectored, Banded, Concentric, Randomly, Uniform}, HoldFirst];
+SetAttributes[{Sectored, Banded, Concentric, Randomized, Uniform}, HoldFirst];
 
 makeWorld[___] := Throw[$Failed];
 
@@ -362,6 +398,9 @@ LocalFunction::usage = "Optional function applied to cell neighbourhoods that fe
 Payoff::usage="Payoff function as a function of action neighborhood (and optional global value)";
 Weighted::usage = "Weights for probabilistic agent actions, such as Weighted[1 -> 0, 2 -> 1]";
 AgentType::usage = "\"Complex\" if agent choices are probabilistic or potentially out of bound, \"Simple\" if not, \"Constant\" if agent is constant-choice";
+GlobalNeighbors::usage = "A list of strategies that participate in every selection step.";
+PredictiveSelection::usage = "A set of strategies whereby the selection process tries amongst them and selects the one that would yield the best fitness.";
+
 Options[Simulate]=
 {
 	Seed -> Automatic,
@@ -375,11 +414,13 @@ Options[Simulate]=
 	MutationNumber -> 2,
 	Temperature -> 1/2,
 	Neighborhood -> Automatic,
+	GlobalNeighbors -> None,
 	SingleNeighbor -> False,
 	Boundary -> Automatic,
 	LocalFunction -> LocalTotal,
 	GlobalFunction -> None,
 	AgentType -> "Simple",	
+	PredictiveSelection -> None,
 	ProgressIndicator -> True,
 	Payoff -> Automatic
 };
@@ -395,7 +436,6 @@ Simulate[options:OptionsPattern[]] := Module[
 	 size = OptionValue[Size],
 	 seed = OptionValue[Seed] /. Automatic -> RandomInteger[256],
 	 period = OptionValue[SelectPeriod],
-	 duration = OptionValue[SelectDuration],
 	 initial = OptionValue[InitialPopulation],
 	 frames, data, t = 1},
 
@@ -409,7 +449,9 @@ Simulate[options:OptionsPattern[]] := Module[
 		 $mutations = OptionValue[MutationNumber],
 		 $agenttype = OptionValue[AgentType],
 		 $temperature = OptionValue[Temperature],
-		 $local = OptionValue[LocalFunction],
+		 $predictive = CacheAgentStatic /@ toList[OptionValue[PredictiveSelection]],
+		 $local = OptionValue[LocalFunction] /. Automatic -> $local,
+		 $selectionsteps = OptionValue[SelectDuration],
 		 $global = OptionValue[GlobalFunction],
 		 $boundary = OptionValue[Boundary] /. Automatic -> $boundary,
 		 $maskn = OptionValue[Neighborhood] /. Automatic -> $maskn,
@@ -436,7 +478,7 @@ Simulate[options:OptionsPattern[]] := Module[
 
 					Check[
 					If[Mod[$timestep, period] == 0 && $timestep != 1, 
-						agents = SelectAgents[cells, agents, duration]];
+						agents = SelectAgents[cells, agents]];
 
 					cells = UpdateAgents[cells, agents];,
 
@@ -451,7 +493,7 @@ Simulate[options:OptionsPattern[]] := Module[
 		SimulationData[
 			{data[[1]], data[[2]], frames}, 
 			FunctionToGraph /@ {AgentTable, ParentTable, AgeTable, SequenceTable, DriftTable},
-			{RandomSeed -> seed, SelectPeriod -> period, SelectDuration -> duration, 
+			{RandomSeed -> seed, SelectPeriod -> period, SelectDuration -> $selectionsteps, 
 			MutationRate -> $mutation, MutationNumber -> $mutations, Temperature -> $temperature, Boundary -> $boundary, 
 			Payoff -> $payoff, Actions -> $actions, Neighborhood -> $maskn,
 			LocalFunction -> $local, GlobalFunction -> $global}
@@ -564,8 +606,9 @@ Module[{func, options, legend},
 	Animate[
 			Check[func[i], "Error"],
 			{i, If[TrueQ @ OptionValue[Legend], 0, 1], Length[data[[1,1]]], 1},
-			AnimationRunning -> False,
-			AnimationRate -> 15
+			AnimationRunning -> True,
+			AnimationRepetitions -> 3, 
+			AnimationRate -> 10
 		]
 ];
 
@@ -643,7 +686,7 @@ GenerateLegend[agentlist_, agentcache_, colorfunc_, postfunc_] :=
 (*Drawing individual simulation frames*)
 
 
-$actioncolors = {-1 -> Gray, 0 -> White, 1 -> Black} ~Join~  Map[(#1+2) -> Hue[#1/5, 0.7]&, Range[5]];
+$actioncolors = {-1 -> Gray, 0 -> White, 1 -> LightGray} ~Join~  Map[(#1+2) -> Hue[#1/5, 0.7]&, Range[5]];
 
 Options[PlotState] :=
 {
@@ -659,7 +702,7 @@ PlotState[cells_, agents_, OptionsPattern[]]:=
 	layoutfunc = OptionValue[Alignment] /. {Horizontal -> GraphicsRow, Vertical -> GraphicsColumn}},
 	Replace[
 	{
-		If[show === All || show == "Choices",
+		If[show === All || show == "Actions",
 		ArrayPlot[
 			cells,
 			Frame -> False,
