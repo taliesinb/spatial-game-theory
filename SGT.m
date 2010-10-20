@@ -400,7 +400,6 @@ LocalFunction::usage = "Optional function applied to cell neighbourhoods that fe
 Payoff::usage="Payoff function as a function of action neighborhood (and optional global value)";
 Weighted::usage = "Weights for probabilistic agent actions, such as Weighted[1 -> 0, 2 -> 1]";
 AgentType::usage = "\"Complex\" if agent choices are probabilistic or potentially out of bound, \"Simple\" if not, \"Constant\" if agent is constant-choice";
-GlobalNeighbors::usage = "A list of strategies that participate in every selection step.";
 PredictiveSelection::usage = "A set of strategies whereby the selection process tries amongst them and selects the one that would yield the best fitness.";
 
 Options[Simulate]=
@@ -416,8 +415,6 @@ Options[Simulate]=
 	MutationNumber -> 2,
 	Temperature -> 1/2,
 	Neighborhood -> Automatic,
-	GlobalNeighbors -> None,
-	SingleNeighbor -> False,
 	Boundary -> Automatic,
 	LocalFunction -> LocalTotal,
 	GlobalFunction -> None,
@@ -509,6 +506,7 @@ Format[SimulationData[{cells_, agents_, frames_}, _, _], StandardForm] :=
 
 
 SimulationOptions[SimulationData[_, _, options_]] := options;
+SimulationAgents[SimulationData[_, {agents_, ___}, _]] := agents;
 
 
 (* ::Subsection:: *)
