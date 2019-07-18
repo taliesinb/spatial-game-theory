@@ -89,7 +89,7 @@ ComplexReplace[lhs_, Agent_] := With[
 	Replace[
 		If[MatchQ[agent, _Function | _Symbol], agent[lhs], Replace[lhs, agent]],
 		{w_Weighted :> RandomChoice[Thread[List @@ w, Rule]],
-		 Bit[r_] :> RandomChoice[{r,1-r}->{1,0}]}]];
+		 Poisson[r_] :> RandomChoice[{r,1-r}->{1,0}]}]];
 
 SimpleReplace[lhs_, Agent_] := Replace[lhs, AgentTable[Agent]];
 
@@ -308,7 +308,7 @@ Mutate[RuleDelayed[a_, b_]]:= RuleDelayed[a, b];
 Mutate[i_Integer] := RandomChoice[$actions];
 Mutate[r_Real] := RandomReal[{0.5, 2}] * r;
 Mutate[weights_Weighted] := MapAt[Mutate, weights, {RandomInteger[{1,Length[weights]}],1}];
-Mutate[Bit[r_]] := Bit[Clip[r + 0.1 * RandomReal[], {0, 1}]];
+Mutate[Poisson[r_]] := Poisson[Clip[r + 0.1 * RandomReal[], {0, 1}]];
 
 MutateAgent[rules_List] := MapAt[Mutate, rules, RandomInteger[{1, Length[rules]}]];
 MutateAgent[rule_] := MapAt[Mutate, rule, {2}];
@@ -579,23 +579,38 @@ backend[data:SimulationData[{cells_, agents_, frames_}, {agentcache_, ___}, _], 
 (* ::Subsection:: *)
 (*Videos and animations*)
 
+Clear[ExportAnimation];
 
-ExportAnimation[file_, data_SimulationData, opts:OptionsPattern[Visualize]] :=
-Module[{func, options, render, label, len},
+Options[ExportAnimation] = Join[
+	Options[Visualize],
+	{
+	"Every" -> 1,
+	"Limit" -> 100,
+	"Start" -> 1
+}];
+
+ExportAnimation[file_, data_SimulationData, opts:OptionsPattern[]] :=
+Module[{func, options, render, label, len, opts2},
+
+	opts2 = Sequence @@ FilterRules[{opts}, Options[Visualize]];
 
 	label = OptionValue[Label];
-	func = backend[data, opts];
-	len = Length[data[[1]]];
+	func = backend[data, opts2];
+	len = Length[data[[1, 1]]];
+	len = Min[OptionValue["Limit"], len];
+	skip = OptionValue["Every"];
+	start = OptionValue["Start"];
 
 	render = Table[
 				frameno = i;
 				Pane[func[i], ImageMargins -> 8],
-			{i, 1, len, 1}] ~Monitor~ ProgressIndicator[i, {1, len}];
+			{i, start, len, skip}] ~Monitor~ ProgressIndicator[i, {1, len}];
 	
 	Export[
 		file,
 		render,
-		"FrameRate" -> 15
+		"FrameRate" -> 15,
+		AnimationRepetitions -> Infinity
 	]
 ];
 
